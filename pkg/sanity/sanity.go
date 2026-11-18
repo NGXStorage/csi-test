@@ -59,6 +59,10 @@ type CSISecrets struct {
 // BeforeEach. For example, the BeforeEach could set up the CSI driver
 // and then set the Address field differently for each test.
 type TestConfig struct {
+	// SharedArray scopes inventory assertions to the resources created by the test.
+	// The default assumes exclusive use of the backend during the suite.
+	SharedArray bool
+
 	// TargetPath is the *parent* directory for NodePublishVolumeRequest.target_path.
 	// It gets created and removed by csi-sanity.
 	TargetPath string
@@ -440,8 +444,6 @@ func loadFromFile(from string, to interface{}) {
 	}
 }
 
-var uniqueSuffix = "-" + PseudoUUID()
-
 // PseudoUUID returns a unique string generated from random
 // bytes, empty string in case of error.
 func PseudoUUID() string {
@@ -453,11 +455,13 @@ func PseudoUUID() string {
 	return fmt.Sprintf("%08X-%08X", b[0:4], b[4:8])
 }
 
-// UniqueString returns a unique string by appending a random
-// number. In case of an error, just the prefix is returned, so it
-// alone should already be fairly unique.
+// UniqueString returns a unique string by appending random bytes.
 func UniqueString(prefix string) string {
-	return prefix + uniqueSuffix
+	suffix := PseudoUUID()
+	if suffix == "" {
+		panic("failed to generate a unique name")
+	}
+	return prefix + "-" + suffix
 }
 
 func UniqueStringWithLength(prefix string, length int) string {

@@ -216,10 +216,10 @@ var _ = DescribeSanity("Controller Service [Controller Server]", func(sc *TestCo
 			Expect(err).NotTo(HaveOccurred())
 			Expect(vols).NotTo(BeNil())
 
-			totalVols := len(vols.GetEntries())
+			initialCount := len(vols.GetEntries())
 
 			By("creating a volume")
-			name := "sanity"
+			name := UniqueString("sanity-list-volume")
 
 			// Create a new volume.
 			req := MakeCreateVolumeReq(sc, name)
@@ -231,7 +231,16 @@ var _ = DescribeSanity("Controller Service [Controller Server]", func(sc *TestCo
 				&csi.ListVolumesRequest{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(vols).NotTo(BeNil())
-			Expect(len(vols.GetEntries())).To(Equal(totalVols + 1))
+			if !sc.Config.SharedArray {
+				Expect(vols.GetEntries()).To(HaveLen(initialCount+1), "dedicated array volume count after create")
+			}
+			var found bool
+			for _, entry := range vols.GetEntries() {
+				if entry.GetVolume().GetVolumeId() == vol.GetVolume().GetVolumeId() {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(), "created volume is missing from the list")
 
 			By("deleting the volume")
 
@@ -249,7 +258,12 @@ var _ = DescribeSanity("Controller Service [Controller Server]", func(sc *TestCo
 				&csi.ListVolumesRequest{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(vols).NotTo(BeNil())
-			Expect(len(vols.GetEntries())).To(Equal(totalVols))
+			if !sc.Config.SharedArray {
+				Expect(vols.GetEntries()).To(HaveLen(initialCount), "dedicated array volume count after delete")
+			}
+			for _, entry := range vols.GetEntries() {
+				Expect(entry.GetVolume().GetVolumeId()).NotTo(Equal(vol.GetVolume().GetVolumeId()), "deleted volume is still listed")
+			}
 		})
 
 		// Disabling this below case as it is fragile and results are inconsistent
@@ -287,7 +301,7 @@ var _ = DescribeSanity("Controller Service [Controller Server]", func(sc *TestCo
 				// Ensure minimum minVolCount volumes exist.
 				By("creating required new volumes")
 				for i := initialTotalVols; i < minVolCount; i++ {
-					name := "sanity" + strconv.Itoa(i)
+					name := UniqueString("sanity" + strconv.Itoa(i))
 					req := MakeCreateVolumeReq(sc, name)
 					vol, err := r.CreateVolume(context.Background(), req)
 					Expect(err).NotTo(HaveOccurred())
@@ -324,7 +338,7 @@ var _ = DescribeSanity("Controller Service [Controller Server]", func(sc *TestCo
 			}
 
 			By("creating a new volume")
-			vol := r.MustCreateVolume(context.Background(), MakeCreateVolumeReq(sc, "new-addition"))
+			vol := r.MustCreateVolume(context.Background(), MakeCreateVolumeReq(sc, UniqueString("new-addition")))
 			existing_vols[vol.Volume.VolumeId] = true
 
 			vols, err = r.ListVolumes(
@@ -1092,7 +1106,7 @@ var _ = DescribeSanity("ListSnapshots [Controller Server]", func(sc *TestContext
 		Expect(err).NotTo(HaveOccurred())
 		Expect(snapshots).NotTo(BeNil())
 
-		totalSnapshots := len(snapshots.GetEntries())
+		initialCount := len(snapshots.GetEntries())
 
 		By("creating a snapshot")
 		volReq := MakeCreateVolumeReq(sc, UniqueString("listSnapshots-volume-3"))
@@ -1102,7 +1116,16 @@ var _ = DescribeSanity("ListSnapshots [Controller Server]", func(sc *TestContext
 		snapshots, err = r.ListSnapshots(context.Background(), req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(snapshots).NotTo(BeNil())
-		Expect(snapshots.GetEntries()).To(HaveLen(totalSnapshots + 1))
+		if !sc.Config.SharedArray {
+			Expect(snapshots.GetEntries()).To(HaveLen(initialCount+1), "dedicated array snapshot count after create")
+		}
+		var found bool
+		for _, entry := range snapshots.GetEntries() {
+			if entry.GetSnapshot().GetSnapshotId() == snapshot.GetSnapshot().GetSnapshotId() {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "created snapshot is missing from the list")
 
 		By("deleting the snapshot")
 		dreq := &csi.DeleteSnapshotRequest{SnapshotId: snapshot.Snapshot.SnapshotId}
@@ -1116,79 +1139,66 @@ var _ = DescribeSanity("ListSnapshots [Controller Server]", func(sc *TestContext
 		snapshots, err = r.ListSnapshots(context.Background(), req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(snapshots).NotTo(BeNil())
-		Expect(snapshots.GetEntries()).To(HaveLen(totalSnapshots))
+		if !sc.Config.SharedArray {
+			Expect(snapshots.GetEntries()).To(HaveLen(initialCount), "dedicated array snapshot count after delete")
+		}
+		for _, entry := range snapshots.GetEntries() {
+			Expect(entry.GetSnapshot().GetSnapshotId()).NotTo(Equal(snapshot.GetSnapshot().GetSnapshotId()), "deleted snapshot is still listed")
+		}
 	})
 
 	It("should return next token when a limited number of entries are requested", func() {
-		// minSnapshotCount is the minimum number of snapshots expected to exist,
-		// based on which paginated snapshot listing is performed.
-		minSnapshotCount := 5
-		// maxEntried is the maximum entries in list snapshot request.
-		maxEntries := 2
-		// currentTotalVols is the total number of volumes at a given time. It
-		// is used to verify that all the snapshots have been listed.
-		currentTotalSnapshots := 0
-
+		const minSnapshots = 5
+		const maxEntries = 2
+		ctx := context.Background()
 		req := &csi.ListSnapshotsRequest{}
-
 		if sc.Secrets != nil {
 			req.Secrets = sc.Secrets.ListSnapshotsSecret
 		}
-
-		// Get the number of existing volumes.
-		snapshots, err := r.ListSnapshots(context.Background(), req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(snapshots).NotTo(BeNil())
-
-		initialTotalSnapshots := len(snapshots.GetEntries())
-		currentTotalSnapshots = initialTotalSnapshots
-
-		// Ensure minimum minVolCount volumes exist.
-		if initialTotalSnapshots < minSnapshotCount {
-
-			By("creating required new volumes")
-			requiredSnapshots := minSnapshotCount - initialTotalSnapshots
-
-			for i := 1; i <= requiredSnapshots; i++ {
-				volReq := MakeCreateVolumeReq(sc, UniqueString("volume"+strconv.Itoa(i)))
-				snapshot, _ := r.MustCreateSnapshotFromVolumeRequest(context.Background(), volReq, UniqueString("snapshot"+strconv.Itoa(i)))
-				verifySnapshotInfo(snapshot.GetSnapshot())
+		var expected []string
+		if sc.Config.SharedArray {
+			By("scoping pagination to a dedicated volume")
+			volume := r.MustCreateVolume(ctx, MakeCreateVolumeReq(sc, UniqueString("pagination-volume")))
+			req.SourceVolumeId = volume.GetVolume().GetVolumeId()
+		} else {
+			By("recording the array-wide inventory before pagination")
+			baseline, err := r.ListSnapshots(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(baseline).NotTo(BeNil())
+			for _, entry := range baseline.GetEntries() {
+				expected = append(expected, entry.GetSnapshot().GetSnapshotId())
 			}
-
-			// Update the current total snapshots count.
-			currentTotalSnapshots += requiredSnapshots
 		}
 
-		// Request list snapshots with max entries maxEntries.
-
-		req = &csi.ListSnapshotsRequest{MaxEntries: int32(maxEntries)}
-
-		if sc.Secrets != nil {
-			req.Secrets = sc.Secrets.ListSnapshotsSecret
+		for len(expected) < minSnapshots {
+			volumeID := req.SourceVolumeId
+			if volumeID == "" {
+				volume := r.MustCreateVolume(ctx, MakeCreateVolumeReq(sc, UniqueString("pagination-volume")))
+				volumeID = volume.GetVolume().GetVolumeId()
+			}
+			name := UniqueString("pagination-snapshot")
+			snapshot := r.MustCreateSnapshot(ctx, MakeCreateSnapshotReq(sc, name, volumeID))
+			expected = append(expected, snapshot.GetSnapshot().GetSnapshotId())
 		}
 
-		snapshots, err = r.ListSnapshots(context.Background(), req)
+		req.MaxEntries = maxEntries
+		first, err := r.ListSnapshots(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(snapshots).NotTo(BeNil())
+		Expect(first).NotTo(BeNil())
+		Expect(first.GetEntries()).To(HaveLen(maxEntries))
+		Expect(first.GetNextToken()).NotTo(BeEmpty())
 
-		nextToken := snapshots.GetNextToken()
-
-		Expect(snapshots.GetEntries()).To(HaveLen(maxEntries))
-
-		// Request list snapshots with starting_token and no max entries.
-
-		req = &csi.ListSnapshotsRequest{StartingToken: nextToken}
-
-		if sc.Secrets != nil {
-			req.Secrets = sc.Secrets.ListSnapshotsSecret
-		}
-
-		snapshots, err = r.ListSnapshots(context.Background(), req)
+		req.StartingToken = first.GetNextToken()
+		req.MaxEntries = 0
+		rest, err := r.ListSnapshots(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(snapshots).NotTo(BeNil())
-
-		// Ensure that all the remaining entries are returned at once.
-		Expect(snapshots.GetEntries()).To(HaveLen(currentTotalSnapshots - maxEntries))
+		Expect(rest).NotTo(BeNil())
+		Expect(rest.GetNextToken()).To(BeEmpty())
+		var listed []string
+		for _, entry := range append(first.GetEntries(), rest.GetEntries()...) {
+			listed = append(listed, entry.GetSnapshot().GetSnapshotId())
+		}
+		Expect(listed).To(ConsistOf(expected), "paginated snapshot IDs differ from expected inventory")
 	})
 })
 

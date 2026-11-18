@@ -13,6 +13,13 @@ If you want to specify a mount point:
 $ csi-sanity --csi.endpoint=<your csi driver endpoint> --csi.mountpoint=/mnt
 ```
 
+The default assumes a dedicated test array and checks array-wide counts and
+snapshot pagination. If other workloads create or delete storage during the
+suite, pass `--shared-array` to check the test's own volume and snapshot IDs
+and paginate snapshots on its own volume. Omit the flag or pass
+`--shared-array=false` to use the dedicated-array checks. Both modes create
+and delete test resources.
+
 For verbose type:
 
 ```

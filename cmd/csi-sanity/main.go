@@ -64,12 +64,7 @@ func (t *testing) Fail() {
 	t.result = 1
 }
 
-func main() {
-	version := flag.Bool("version", false, "print version of this program")
-
-	// Get configuration with defaults.
-	config := sanity.NewTestConfig()
-
+func registerCSIFlags(config *sanity.TestConfig) {
 	// Support overriding the default configuration via flags.
 	stringVar(&config.Address, "endpoint", "CSI endpoint")
 	stringVar(&config.ControllerAddress, "controllerendpoint", "CSI controller endpoint")
@@ -93,6 +88,16 @@ func main() {
 	boolVar(&config.TestNodeVolumeAttachLimit, "testnodevolumeattachlimit", "Test node volume attach limit")
 	flag.Var(flag.Lookup("ginkgo.junit-report").Value, prefix+"junitfile", "JUnit XML output file where test results will be written (deprecated: use ginkgo.junit-report instead)")
 
+	flag.BoolVar(&config.SharedArray, "shared-array", config.SharedArray, "Allow other clients to change backend inventory during volume and snapshot list tests")
+}
+
+func main() {
+	version := flag.Bool("version", false, "print version of this program")
+
+	// Get configuration with defaults.
+	config := sanity.NewTestConfig()
+
+	registerCSIFlags(&config)
 	flag.Parse()
 	if *version {
 		fmt.Printf("Version = %s\n", VERSION)

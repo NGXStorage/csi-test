@@ -24,6 +24,8 @@ func TestMyDriver(t *testing.T) {
 }
 ```
 
+For a shared test backend, set `config.SharedArray = true` before starting the suite.
+
 Only one such test function is supported because under the hood a
 Ginkgo test suite gets constructed and executed by the call.
 
