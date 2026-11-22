@@ -1,0 +1,6 @@
+approvers:
+- kubernetes-csi-approvers
+- pohly
+
+reviewers:
+- kubernetes-csi-reviewers

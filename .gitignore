@@ -1,0 +1,4 @@
+
+#ignore files specific to csi-test
+bin/*
+cmd/csi-sanity/csi-sanity
